@@ -110,7 +110,6 @@ func (c *Client) runWithJSON(ctx context.Context, req *Request) (*http.Response,
 	}
 	c.logf(">> variables: %v", req.vars)
 	c.logf(">> query: %s", req.q)
-	fmt.Println(requestBodyObj)
 	r, err := http.NewRequest(http.MethodPost, c.endpoint, &requestBody)
 	if err != nil {
 		return nil, err
@@ -125,9 +124,7 @@ func (c *Client) runWithJSON(ctx context.Context, req *Request) (*http.Response,
 	}
 	c.logf(">> headers: %v", r.Header)
 	r = r.WithContext(ctx)
-	res, err := c.httpClient.Do(r)
-	fmt.Println(res, err)
-	return res, err
+	return c.httpClient.Do(r)
 }
 
 func (c *Client) runWithPostFields(ctx context.Context, req *Request) (*http.Response, error) {
