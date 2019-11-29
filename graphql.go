@@ -81,22 +81,22 @@ func (c *Client) logf(format string, args ...interface{}) {
 // Pass in a nil response object to skip response parsing.
 // If the request fails or the server returns an error, the first error
 // will be returned.
-func (c *Client) Run(ctx context.Context, req *Request, resp interface{}) error {
+func (c *Client) Run(ctx context.Context, req *Request) (*http.Response, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	default:
 	}
 	if len(req.files) > 0 && !c.useMultipartForm {
-		return errors.New("cannot send files with PostFields option")
+		return nil, errors.New("cannot send files with PostFields option")
 	}
 	if c.useMultipartForm {
-		return c.runWithPostFields(ctx, req, resp)
+		return c.runWithPostFields(ctx, req)
 	}
-	return c.runWithJSON(ctx, req, resp)
+	return c.runWithJSON(ctx, req)
 }
 
-func (c *Client) runWithJSON(ctx context.Context, req *Request, resp interface{}) error {
+func (c *Client) runWithJSON(ctx context.Context, req *Request) (*http.Response, error) {
 	var requestBody bytes.Buffer
 	requestBodyObj := struct {
 		Query     string                 `json:"query"`
@@ -106,16 +106,14 @@ func (c *Client) runWithJSON(ctx context.Context, req *Request, resp interface{}
 		Variables: req.vars,
 	}
 	if err := json.NewEncoder(&requestBody).Encode(requestBodyObj); err != nil {
-		return errors.Wrap(err, "encode body")
+		return nil, errors.Wrap(err, "encode body")
 	}
 	c.logf(">> variables: %v", req.vars)
 	c.logf(">> query: %s", req.q)
-	gr := &graphResponse{
-		Data: resp,
-	}
+	fmt.Println(requestBodyObj)
 	r, err := http.NewRequest(http.MethodPost, c.endpoint, &requestBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	r.Close = c.closeReq
 	r.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -128,65 +126,45 @@ func (c *Client) runWithJSON(ctx context.Context, req *Request, resp interface{}
 	c.logf(">> headers: %v", r.Header)
 	r = r.WithContext(ctx)
 	res, err := c.httpClient.Do(r)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, res.Body); err != nil {
-		return errors.Wrap(err, "reading body")
-	}
-	c.logf("<< %s", buf.String())
-	if err := json.NewDecoder(&buf).Decode(&gr); err != nil {
-		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("graphql: server returned a non-200 status code: %v", res.StatusCode)
-		}
-		return errors.Wrap(err, "decoding response")
-	}
-	if len(gr.Errors) > 0 {
-		// return first error
-		return gr.Errors[0]
-	}
-	return nil
+	fmt.Println(res, err)
+	return res, err
 }
 
-func (c *Client) runWithPostFields(ctx context.Context, req *Request, resp interface{}) error {
+func (c *Client) runWithPostFields(ctx context.Context, req *Request) (*http.Response, error) {
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 	if err := writer.WriteField("query", req.q); err != nil {
-		return errors.Wrap(err, "write query field")
+		return nil, errors.Wrap(err, "write query field")
 	}
 	var variablesBuf bytes.Buffer
 	if len(req.vars) > 0 {
 		variablesField, err := writer.CreateFormField("variables")
 		if err != nil {
-			return errors.Wrap(err, "create variables field")
+			return nil, errors.Wrap(err, "create variables field")
 		}
 		if err := json.NewEncoder(io.MultiWriter(variablesField, &variablesBuf)).Encode(req.vars); err != nil {
-			return errors.Wrap(err, "encode variables")
+			return nil, errors.Wrap(err, "encode variables")
 		}
 	}
 	for i := range req.files {
 		part, err := writer.CreateFormFile(req.files[i].Field, req.files[i].Name)
 		if err != nil {
-			return errors.Wrap(err, "create form file")
+			return nil, errors.Wrap(err, "create form file")
 		}
 		if _, err := io.Copy(part, req.files[i].R); err != nil {
-			return errors.Wrap(err, "preparing file")
+			return nil, errors.Wrap(err, "preparing file")
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return errors.Wrap(err, "close writer")
+		return nil, errors.Wrap(err, "close writer")
 	}
 	c.logf(">> variables: %s", variablesBuf.String())
 	c.logf(">> files: %d", len(req.files))
 	c.logf(">> query: %s", req.q)
-	gr := &graphResponse{
-		Data: resp,
-	}
+
 	r, err := http.NewRequest(http.MethodPost, c.endpoint, &requestBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	r.Close = c.closeReq
 	r.Header.Set("Content-Type", writer.FormDataContentType())
@@ -198,27 +176,7 @@ func (c *Client) runWithPostFields(ctx context.Context, req *Request, resp inter
 	}
 	c.logf(">> headers: %v", r.Header)
 	r = r.WithContext(ctx)
-	res, err := c.httpClient.Do(r)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, res.Body); err != nil {
-		return errors.Wrap(err, "reading body")
-	}
-	c.logf("<< %s", buf.String())
-	if err := json.NewDecoder(&buf).Decode(&gr); err != nil {
-		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("graphql: server returned a non-200 status code: %v", res.StatusCode)
-		}
-		return errors.Wrap(err, "decoding response")
-	}
-	if len(gr.Errors) > 0 {
-		// return first error
-		return gr.Errors[0]
-	}
-	return nil
+	return c.httpClient.Do(r)
 }
 
 // WithHTTPClient specifies the underlying http.Client to use when
